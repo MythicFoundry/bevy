@@ -3,7 +3,7 @@
 use core::array;
 
 use bevy_asset::{load_embedded_asset, AssetId, AssetServer, Handle};
-use bevy_camera::Camera3d;
+use bevy_camera::{Camera3d, MainPassResolutionOverride, Viewport};
 use bevy_color::ColorToComponents as _;
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
@@ -18,6 +18,7 @@ use bevy_light::{FogVolume, VolumetricFog, VolumetricLight};
 use bevy_math::{vec4, Affine3A, Mat4, Vec3, Vec3A, Vec4};
 use bevy_mesh::{Mesh, MeshVertexBufferLayoutRef};
 use bevy_render::{
+    camera::ExtractedCamera,
     mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
     render_asset::RenderAssets,
     render_resource::{
@@ -32,7 +33,7 @@ use bevy_render::{
         SpecializedRenderPipeline, SpecializedRenderPipelines, StoreOp, TextureFormat,
         TextureSampleType, TextureUsages, VertexState,
     },
-    renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
+    renderer::{RenderAdapterInfo, RenderContext, RenderDevice, RenderQueue, ViewQuery},
     sync_world::RenderEntity,
     texture::GpuImage,
     view::{ExtractedView, Msaa, ViewDepthTexture, ViewTarget},
@@ -287,6 +288,8 @@ pub fn volumetric_fog(
         &ViewVolumetricFog,
         &MeshViewBindGroup,
         &Msaa,
+        &ExtractedCamera,
+        Option<&MainPassResolutionOverride>,
     )>,
     pipeline_cache: Res<PipelineCache>,
     volumetric_lighting_pipeline: Res<VolumetricFogPipeline>,
@@ -304,6 +307,8 @@ pub fn volumetric_fog(
         view_fog_volumes,
         view_bind_group,
         msaa,
+        camera,
+        resolution_override,
     ) = view.into_inner();
 
     // Fetch the uniform buffer and binding.
@@ -407,6 +412,14 @@ pub fn volumetric_fog(
 
         let command_encoder = ctx.command_encoder();
         let mut render_pass = command_encoder.begin_render_pass(&render_pass_descriptor);
+        // Match the opaque/transparent main-pass region before reconstruction.
+        if let Some(viewport) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override) {
+            render_pass.set_viewport(
+                viewport.physical_position.x as f32, viewport.physical_position.y as f32,
+                viewport.physical_size.x as f32, viewport.physical_size.y as f32,
+                viewport.depth.start, viewport.depth.end,
+            );
+        }
 
         render_pass.set_vertex_buffer(0, *vertex_buffer_slice.buffer.slice(..));
         render_pass.set_pipeline(pipeline);
@@ -556,7 +569,17 @@ pub fn prepare_volumetric_fog_pipelines(
     view_targets: Query<(Entity, &ExtractedView), With<VolumetricFog>>,
     meshes: Res<RenderAssets<RenderMesh>>,
     view_key_cache: Res<ViewKeyCache>,
+    render_device: Res<RenderDevice>,
+    adapter: Res<RenderAdapterInfo>,
 ) {
+    // Reject unsupported active profiles before any GPU pipeline is queued.
+    if bevy_render::settings::Backends::from(adapter.backend).intersects(bevy_render::settings::Backends::GL)
+        || render_device.limits().max_storage_buffers_per_shader_stage == 0 {
+        for (entity, _) in &view_targets {
+            commands.entity(entity).remove::<ViewVolumetricFogPipelines>();
+        }
+        return;
+    }
     let Some(plane_mesh) = meshes.get(&fog_assets.plane_mesh) else {
         // There's an off chance that the mesh won't be prepared yet if `RenderAssetBytesPerFrame` limiting is in use.
         return;

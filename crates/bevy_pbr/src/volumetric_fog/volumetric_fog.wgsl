@@ -110,6 +110,13 @@ fn henyey_greenstein(neg_LdotV: f32) -> f32 {
     return FRAC_4_PI * (1.0 - g * g) / (denom * sqrt(denom));
 }
 
+// Main-pass pixels can occupy a reduced region in the full-size color/depth targets.
+// Keep NDC in the same projection used to render their depth, with subview origin intact.
+fn mh_fog_frag_coord_to_ndc(coord: vec4<f32>) -> vec3<f32> {
+    let uv = (coord.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
+    return vec3(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), coord.z);
+}
+
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // Unpack the `volumetric_fog` settings.
@@ -136,11 +143,11 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let frag_coord = position;
     let ndc_end_depth_from_buffer = textureLoad(depth_texture, vec2<i32>(frag_coord.xy), 0);
     let view_end_depth_from_buffer = -position_ndc_to_view(
-        frag_coord_to_ndc(vec4(position.xy, ndc_end_depth_from_buffer, 1.0))).z;
+        mh_fog_frag_coord_to_ndc(vec4(position.xy, ndc_end_depth_from_buffer, 1.0))).z;
 
     // Calculate the start position of the ray. Since we're only rendering front
     // faces of the AABB, this is the current fragment's depth.
-    let view_start_pos = position_ndc_to_view(frag_coord_to_ndc(frag_coord));
+    let view_start_pos = position_ndc_to_view(mh_fog_frag_coord_to_ndc(frag_coord));
 
     // Calculate the end position of the ray. This requires us to raytrace the
     // back faces of the AABB to find the one that our ray intersects.
@@ -194,7 +201,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
     // Calculate the ray origin (`Ro`) and the ray direction (`Rd`) in NDC,
     // view, and world coordinates.
-    let Rd_ndc = vec3(frag_coord_to_ndc(position).xy, 1.0);
+    let Rd_ndc = vec3(mh_fog_frag_coord_to_ndc(position).xy, 1.0);
     let Rd_view = normalize(position_ndc_to_view(Rd_ndc));
     var Ro_world = position_view_to_world(view_start_pos.xyz);
     let Rd_world = normalize(position_ndc_to_world(Rd_ndc) - view.world_position);
@@ -371,7 +378,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
         var sample_color = vec3(0.0);
 
-        let cluster_index = clustering::view_fragment_cluster_index(frag_coord.xy, P_view.z, is_orthographic);
+        let cluster_index = clustering::view_fragment_cluster_index(view.viewport.xy + (frag_coord.xy - view.main_pass_viewport.xy) * view.viewport.zw / view.main_pass_viewport.zw, P_view.z, is_orthographic);
         var clusterable_object_index_ranges = clustering::unpack_clusterable_object_index_ranges(cluster_index);
         for (var i: u32 = clusterable_object_index_ranges.first_point_light_index_offset;
             i < clusterable_object_index_ranges.first_reflection_probe_index_offset;
