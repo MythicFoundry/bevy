@@ -70,6 +70,8 @@ struct View {
     color_grading: ColorGrading,
     mip_bias: f32,
     frame_count: u32,
+    depth_pyramid_region: vec4<f32>,
+    previous_depth_pyramid_region: vec4<f32>,
 };
 
 /// World space:

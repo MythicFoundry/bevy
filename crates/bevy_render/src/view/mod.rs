@@ -16,7 +16,7 @@ use crate::{
     render_asset::RenderAssets,
     render_phase::ViewRangefinder3d,
     render_resource::{DynamicUniformBuffer, ShaderType, Texture, TextureView},
-    renderer::{RenderDevice, RenderQueue},
+    renderer::{RenderAdapterInfo, RenderDevice, RenderQueue},
     sync_world::MainEntity,
     texture::{
         CachedTexture, ColorAttachment, DepthAttachment, GpuImage, ManualTextureViews,
@@ -666,6 +666,10 @@ pub struct ViewUniform {
     pub color_grading: ColorGradingUniform,
     pub mip_bias: f32,
     pub frame_count: u32,
+    /// Normalized active depth region: offset.xy, extent.zw.
+    pub depth_pyramid_region: Vec4,
+    /// Active region that produced the previous frame depth pyramid.
+    pub previous_depth_pyramid_region: Vec4,
 }
 
 #[derive(Resource)]
@@ -1011,7 +1015,11 @@ pub fn prepare_view_uniforms(
     )>,
     frame_count: Res<FrameCount>,
     shadow_lod_origin: Option<Res<RenderShadowLodOrigin>>,
+    mut depth_region_history: Local<HashMap<RetainedViewEntity,
+        (u32, Option<NormalizedRenderTarget>, Option<bevy_math::UVec2>, Vec4)>>,
 ) {
+    let previous_frame = frame_count.0.wrapping_sub(1);
+    depth_region_history.retain(|_, (frame, _, _, _)| *frame == previous_frame);
     let view_iter = views.iter();
     let view_count = view_iter.len();
     let Some(mut writer) =
@@ -1037,6 +1045,27 @@ pub fn prepare_view_uniforms(
             main_pass_viewport.z = resolution_override.0.x as f32;
             main_pass_viewport.w = resolution_override.0.y as f32;
         }
+
+        let target = extracted_camera.and_then(|camera| camera.target.clone());
+        let target_size = extracted_camera.and_then(|camera| camera.physical_target_size);
+        // Reconstruction admission supports a full-target, zero-origin view only.
+        // Preserve existing native/subview sampling outside that contract.
+        let mut depth_pyramid_region = Vec4::new(0.0, 0.0, 1.0, 1.0);
+        if let (Some(size), Some(resolution)) = (target_size, resolution_override) {
+            if viewport.xy() == Vec2::ZERO && viewport.zw() == size.as_vec2()
+                && resolution.0.x > 0 && resolution.0.y > 0
+                && resolution.0.x <= size.x && resolution.0.y <= size.y
+            {
+                depth_pyramid_region.z = main_pass_viewport.z / size.x as f32;
+                depth_pyramid_region.w = main_pass_viewport.w / size.y as f32;
+            }
+        }
+        let previous_depth_pyramid_region = depth_region_history.insert(
+            extracted_view.retained_view_entity,
+            (frame_count.0, target.clone(), target_size, depth_pyramid_region),
+        ).filter(|(frame, old_target, old_size, _)|
+            *frame == previous_frame && *old_target == target && *old_size == target_size
+        ).map(|(_, _, _, region)| region).unwrap_or(depth_pyramid_region);
 
         let unjittered_projection = extracted_view.clip_from_view;
         let mut clip_from_view = unjittered_projection;
@@ -1119,6 +1148,8 @@ pub fn prepare_view_uniforms(
                 color_grading: extracted_view.color_grading.clone().into(),
                 mip_bias: mip_bias.unwrap_or(&MipBias(0.0)).0,
                 frame_count: frame_count.0,
+                depth_pyramid_region,
+                previous_depth_pyramid_region,
             }),
         };
 
@@ -1200,6 +1231,7 @@ pub fn prepare_view_targets(
     mut commands: Commands,
     clear_color_global: Res<ClearColor>,
     render_device: Res<RenderDevice>,
+    render_adapter_info: Res<RenderAdapterInfo>,
     mut texture_cache: ResMut<TextureCache>,
     cameras: Query<(
         Entity,
@@ -1295,7 +1327,12 @@ pub fn prepare_view_targets(
                         sample_count: msaa.samples(),
                         dimension: TextureDimension::D2,
                         format: main_texture_format,
-                        usage: TextureUsages::RENDER_ATTACHMENT,
+                        usage: TextureUsages::RENDER_ATTACHMENT
+                            | if render_adapter_info.backend == wgpu::Backend::Gl {
+                                TextureUsages::empty()
+                            } else {
+                                TextureUsages::TEXTURE_BINDING
+                            },
                         view_formats: descriptor.view_formats,
                     },
                 );
