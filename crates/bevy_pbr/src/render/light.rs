@@ -62,7 +62,7 @@ use bevy_render::{
     render_asset::RenderAssets,
     render_phase::*,
     render_resource::*,
-    renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
+    renderer::{RenderAdapterInfo, RenderContext, RenderDevice, RenderQueue, ViewQuery},
     texture::*,
     view::ExtractedView,
     Extract,
@@ -1007,7 +1007,9 @@ pub enum LightEntity {
 pub fn prepare_lights(
     mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
-    (render_device, render_queue): (Res<RenderDevice>, Res<RenderQueue>),
+    (render_device, render_queue, render_adapter_info): (
+        Res<RenderDevice>, Res<RenderQueue>, Res<RenderAdapterInfo>,
+    ),
     mut global_clusterable_object_meta: ResMut<GlobalClusterableObjectMeta>,
     mut light_meta: ResMut<LightMeta>,
     views: Query<
@@ -1401,7 +1403,8 @@ pub fn prepare_lights(
             size: Extent3d {
                 width: point_light_shadow_map.size as u32,
                 height: point_light_shadow_map.size as u32,
-                depth_or_array_layers: point_light_shadow_maps_count.max(1) as u32 * 6,
+                depth_or_array_layers: point_light_shadow_maps_count
+                    .max(if render_adapter_info.backend == wgpu_types::Backend::Gl { 2 } else { 1 }) as u32 * 6,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -1443,6 +1446,13 @@ pub fn prepare_lights(
                 array_layer_count: None,
             });
 
+    let mut directional_shadow_array_layers = (num_directional_cascades_enabled
+        + spot_light_shadow_maps_count).max(1) as u32;
+    if render_adapter_info.backend == wgpu_types::Backend::Gl {
+        // GLES infers cube textures from square allocations with a multiple of six layers.
+        directional_shadow_array_layers = directional_shadow_array_layers.max(2);
+        if directional_shadow_array_layers % 6 == 0 { directional_shadow_array_layers += 1; }
+    }
     let directional_light_depth_texture = texture_cache.get(
         &render_device,
         TextureDescriptor {
@@ -1451,9 +1461,7 @@ pub fn prepare_lights(
                     .min(render_device.limits().max_texture_dimension_2d),
                 height: (directional_light_shadow_map.size as u32)
                     .min(render_device.limits().max_texture_dimension_2d),
-                depth_or_array_layers: (num_directional_cascades_enabled
-                    + spot_light_shadow_maps_count)
-                    .max(1) as u32,
+                depth_or_array_layers: directional_shadow_array_layers,
             },
             mip_level_count: 1,
             sample_count: 1,
