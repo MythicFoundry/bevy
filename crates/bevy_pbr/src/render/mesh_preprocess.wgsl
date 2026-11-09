@@ -292,9 +292,15 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 #endif  // EARLY_PHASE
 
         let uv_pos = ndc_to_uv(ndc_pos.xy);
+#ifdef EARLY_PHASE
+        let depth_region = view.previous_depth_pyramid_region;
+#else
+        let depth_region = view.depth_pyramid_region;
+#endif
+        let depth_uv = depth_region.xy + uv_pos * depth_region.zw;
 
         // Update the AABB and maximum view-space depth.
-        aabb = vec4(min(aabb.xy, uv_pos), max(aabb.zw, uv_pos));
+        aabb = vec4(min(aabb.xy, depth_uv), max(aabb.zw, depth_uv));
         max_depth_view = max(max_depth_view, view_pos.z);
     }
 
