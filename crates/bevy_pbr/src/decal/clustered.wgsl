@@ -185,7 +185,7 @@ fn apply_decals(pbr_input: ptr<function, PbrInput>) {
     let is_orthographic = view_is_orthographic();
 
     let cluster_index =
-        clustered_forward::view_fragment_cluster_index(frag_coord, view_z, is_orthographic);
+        clustered_forward::view_fragment_cluster_index_main_pass(frag_coord, view_z, is_orthographic);
     var clusterable_object_index_ranges =
         clustered_forward::unpack_clusterable_object_index_ranges(cluster_index);
 

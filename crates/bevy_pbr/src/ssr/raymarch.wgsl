@@ -16,11 +16,12 @@
 
 #define_import_path bevy_pbr::raymarch
 
-#import bevy_pbr::mesh_view_bindings::depth_prepass_texture
+#import bevy_pbr::mesh_view_bindings::{depth_prepass_texture, view}
 #import bevy_pbr::view_transformations::{
     direction_world_to_clip,
     ndc_to_uv,
     perspective_camera_near,
+    main_pass_uv_to_texture_uv,
     position_world_to_ndc,
 }
 
@@ -36,7 +37,10 @@
 #ifndef USE_DEPTH_SAMPLERS
 fn depth_texel_clamped(texel: vec2<i32>) -> f32 {
     let dims = textureDimensions(depth_prepass_texture);
-    let max_coord = vec2<i32>(i32(dims.x) - 1, i32(dims.y) - 1);
+    var max_coord = vec2<i32>(i32(dims.x) - 1, i32(dims.y) - 1);
+    if any(view.main_pass_viewport != view.viewport) {
+        max_coord = vec2<i32>(view.main_pass_viewport.zw) - vec2<i32>(1);
+    }
     let clamped = clamp(texel, vec2<i32>(0), max_coord);
     return textureLoad(depth_prepass_texture, clamped, 0);
 }
@@ -65,7 +69,7 @@ fn depth_sample_bilinear_clamped(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
 
 fn depth_sample_linear(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
 #ifdef USE_DEPTH_SAMPLERS
-    return textureSampleLevel(depth_prepass_texture, depth_linear_sampler, uv, 0u);
+    return textureSampleLevel(depth_prepass_texture, depth_linear_sampler, main_pass_uv_to_texture_uv(uv, vec2<f32>(textureDimensions(depth_prepass_texture))), 0u);
 #else
     return depth_sample_bilinear_clamped(uv, tex_size);
 #endif
@@ -73,7 +77,7 @@ fn depth_sample_linear(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
 
 fn depth_sample_nearest(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
 #ifdef USE_DEPTH_SAMPLERS
-    return textureSampleLevel(depth_prepass_texture, depth_nearest_sampler, uv, 0u);
+    return textureSampleLevel(depth_prepass_texture, depth_nearest_sampler, main_pass_uv_to_texture_uv(uv, vec2<f32>(textureDimensions(depth_prepass_texture))), 0u);
 #else
     return depth_sample_nearest_clamped(uv, tex_size);
 #endif
@@ -418,7 +422,7 @@ fn depth_ray_march_new_from_depth(depth_tex_size: vec2<f32>) -> DepthRayMarch {
     res.linear_steps = 4u;
     res.bisection_steps = 0u;
     res.linear_march_exponent = 1.0;
-    res.depth_tex_size = depth_tex_size;
+    res.depth_tex_size = select(depth_tex_size, view.main_pass_viewport.zw, any(view.main_pass_viewport != view.viewport));
     res.depth_thickness_linear_z = 1.0;
     res.march_behind_surfaces = false;
     res.use_sloppy_march = false;

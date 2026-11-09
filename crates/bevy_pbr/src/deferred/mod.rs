@@ -4,6 +4,7 @@ use crate::{
     TONEMAPPING_LUT_TEXTURE_BINDING_INDEX,
 };
 use bevy_app::prelude::*;
+use bevy_camera::{MainPassResolutionOverride, Viewport};
 use bevy_asset::{embedded_asset, load_embedded_asset, AssetServer, Handle};
 use bevy_core_pipeline::{
     core_3d::main_opaque_pass_3d,
@@ -124,6 +125,8 @@ pub fn deferred_lighting(
         &ViewTarget,
         &DeferredLightingIdDepthTexture,
         &DeferredLightingPipeline,
+        &ExtractedCamera,
+        Option<&MainPassResolutionOverride>,
     )>,
     pipeline_cache: Res<PipelineCache>,
     deferred_lighting_layout: Res<DeferredLightingLayout>,
@@ -135,6 +138,8 @@ pub fn deferred_lighting(
         target,
         deferred_lighting_id_depth_texture,
         deferred_lighting_pipeline,
+        camera,
+        resolution_override,
     ) = view.into_inner();
 
     let Some(pipeline) = pipeline_cache.get_render_pipeline(deferred_lighting_pipeline.pipeline_id)
@@ -168,6 +173,11 @@ pub fn deferred_lighting(
         occlusion_query_set: None,
         multiview_mask: None,
     });
+
+    // Shade exactly the scene region populated by the main pass, before reconstruction.
+    if let Some(viewport) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override) {
+        render_pass.set_camera_viewport(&viewport);
+    }
 
     render_pass.set_render_pipeline(pipeline);
 

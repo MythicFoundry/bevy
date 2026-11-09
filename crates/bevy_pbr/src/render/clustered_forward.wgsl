@@ -211,3 +211,13 @@ fn cluster_debug_visualization(
 
     return output_color;
 }
+
+// CPU cluster factors retain output-view pixels; raster fragments use main-pass pixels.
+fn view_fragment_cluster_index_main_pass(frag_coord: vec2<f32>, view_z: f32, is_orthographic: bool) -> u32 {
+    var pixel = frag_coord;
+    let v = bindings::view;
+    if any(v.main_pass_viewport != v.viewport) {
+        pixel = v.viewport.xy + (frag_coord - v.main_pass_viewport.xy) * v.viewport.zw / v.main_pass_viewport.zw;
+    }
+    return view_fragment_cluster_index(pixel, view_z, is_orthographic);
+}

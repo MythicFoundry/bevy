@@ -3,6 +3,7 @@
 use core::ops::Range;
 
 use bevy_app::{App, Plugin};
+use bevy_camera::{MainPassResolutionOverride, Viewport};
 use bevy_asset::{load_embedded_asset, AssetServer, Handle};
 use bevy_core_pipeline::{
     core_3d::{main_opaque_pass_3d, DEPTH_PREPASS_TEXTURE_SUPPORTED},
@@ -22,6 +23,7 @@ use bevy_ecs::{
 };
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 use bevy_render::{
+    camera::ExtractedCamera,
     diagnostic::RecordDiagnostics,
     extract_component::{ExtractComponent, ExtractComponentPlugin},
     render_asset::RenderAssets,
@@ -247,6 +249,8 @@ pub fn screen_space_reflections(
         &ViewTarget,
         &MeshViewBindGroup,
         &ScreenSpaceReflectionsPipelineId,
+        &ExtractedCamera,
+        Option<&MainPassResolutionOverride>,
     )>,
     pipeline_cache: Res<PipelineCache>,
     ssr_pipeline: Res<ScreenSpaceReflectionsPipeline>,
@@ -254,7 +258,7 @@ pub fn screen_space_reflections(
     render_images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let (view_target, view_bind_group, ssr_pipeline_id) = view.into_inner();
+    let (view_target, view_bind_group, ssr_pipeline_id, camera, resolution_override) = view.into_inner();
 
     // Grab the render pipeline.
     let Some(render_pipeline) = pipeline_cache.get_render_pipeline(**ssr_pipeline_id) else {
@@ -305,6 +309,11 @@ pub fn screen_space_reflections(
         multiview_mask: None,
     });
     let pass_span = diagnostics.pass_span(&mut render_pass, "ssr");
+
+    // Shade exactly the scene region populated by the main pass, before reconstruction.
+    if let Some(viewport) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override) {
+        render_pass.set_camera_viewport(&viewport);
+    }
 
     // Set bind groups.
     render_pass.set_render_pipeline(render_pipeline);

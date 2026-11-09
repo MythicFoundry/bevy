@@ -29,6 +29,7 @@
         depth_ndc_to_view_z,
         frag_coord_to_ndc,
         ndc_to_frag_coord,
+        main_pass_uv_to_texture_uv,
         ndc_to_uv,
         position_view_to_ndc,
         position_world_to_ndc,
@@ -115,7 +116,7 @@ fn evaluate_ssr(R_world: vec3<f32>, P_world: vec3<f32>, jitter: f32) -> vec4<f32
     let raymarch_result = depth_ray_march_march(&raymarch);
     if (raymarch_result.hit) {
         return vec4(
-            textureSampleLevel(color_texture, color_sampler, raymarch_result.hit_uv, 0.0).rgb,
+            textureSampleLevel(color_texture, color_sampler, main_pass_uv_to_texture_uv(raymarch_result.hit_uv, vec2<f32>(textureDimensions(color_texture))), 0.0).rgb,
             0.0
         );
     }
@@ -294,7 +295,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // Determine which cluster we're in. We'll need this to find the right
     // reflection probe.
-    let cluster_index = clustered_forward::view_fragment_cluster_index(
+    let cluster_index = clustered_forward::view_fragment_cluster_index_main_pass(
         frag_coord.xy, frag_coord.z, false);
     var clusterable_object_index_ranges =
         clustered_forward::unpack_clusterable_object_index_ranges(cluster_index);
