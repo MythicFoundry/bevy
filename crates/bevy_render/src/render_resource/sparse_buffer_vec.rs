@@ -131,7 +131,7 @@ pub struct SparseBufferUpdateBindGroups {
     /// the bind group for that buffer goes away as well.
     bind_groups: WeakKeyHashMap<Weak<SparseBufferId>, SparseBufferUpdateBindGroup>,
     /// The ID of the update shader pipeline shared among all sparse buffers.
-    pipeline_id: CachedComputePipelineId,
+    pipeline_id: Option<CachedComputePipelineId>,
 }
 
 /// A single bind group for the sparse buffer update shader.
@@ -211,6 +211,10 @@ fn update_sparse_buffers(
         return;
     }
 
+    let Some(pipeline_id) = sparse_buffer_update_bind_groups.pipeline_id else {
+        return;
+    };
+
     // We need to create a command encoder since this pass isn't associated with
     // a view.
     let mut command_encoder =
@@ -225,7 +229,7 @@ fn update_sparse_buffers(
     command_encoder.push_debug_group("sparse buffer update");
 
     let Some(compute_pipeline) =
-        pipeline_cache.get_compute_pipeline(sparse_buffer_update_bind_groups.pipeline_id)
+        pipeline_cache.get_compute_pipeline(pipeline_id)
     else {
         return;
     };
@@ -836,6 +840,13 @@ where
 
 impl FromWorld for SparseBufferUpdateBindGroups {
     fn from_world(world: &mut World) -> Self {
+        if world.resource::<SparseBufferUpdatePipelines>().shader.is_none() {
+            return SparseBufferUpdateBindGroups {
+                bind_groups: WeakKeyHashMap::default(),
+                pipeline_id: None,
+            };
+        }
+
         world.resource_scope::<SpecializedComputePipelines<SparseBufferUpdatePipelines>, _>(
             |world, mut specialized_sparse_buffer_update_pipelines| {
                 let pipeline_cache = world.resource::<PipelineCache>();
@@ -849,7 +860,7 @@ impl FromWorld for SparseBufferUpdateBindGroups {
 
                 SparseBufferUpdateBindGroups {
                     bind_groups: WeakKeyHashMap::default(),
-                    pipeline_id,
+                    pipeline_id: Some(pipeline_id),
                 }
             },
         )
@@ -990,4 +1001,34 @@ fn calculate_allocation_size(length: usize) -> usize {
     let exponent = (length as f64).log(REALLOCATION_FACTOR).ceil();
     let size = REALLOCATION_FACTOR.powf(exponent) as usize;
     size.next_multiple_of(REALLOCATION_SIZE_MULTIPLE)
+}
+
+#[cfg(test)]
+mod sparse_pipeline_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_sparse_updates_initialize_without_a_pipeline_cache_or_device() {
+        let mut world = World::new();
+        world.insert_resource(SparseBufferUpdatePipelines {
+            bind_group_layout: None,
+            shader: None,
+        });
+        let _ = SparseBufferUpdateBindGroups::from_world(&mut world);
+        assert!(!world.contains_resource::<PipelineCache>());
+        assert!(!world.contains_resource::<RenderDevice>());
+        assert!(!world.contains_resource::<SpecializedComputePipelines<SparseBufferUpdatePipelines>>());
+    }
+
+    #[test]
+    #[should_panic(expected = "PipelineCache")]
+    fn enabled_sparse_updates_still_require_the_existing_pipeline_cache_path() {
+        let mut world = World::new();
+        world.insert_resource(SparseBufferUpdatePipelines {
+            bind_group_layout: Some(BindGroupLayoutDescriptor::new("supported sparse fixture", &[])),
+            shader: Some(Handle::default()),
+        });
+        world.init_resource::<SpecializedComputePipelines<SparseBufferUpdatePipelines>>();
+        let _ = SparseBufferUpdateBindGroups::from_world(&mut world);
+    }
 }
