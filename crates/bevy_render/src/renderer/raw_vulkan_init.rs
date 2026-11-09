@@ -73,6 +73,10 @@ pub(crate) fn create_raw_vulkan_instance(
     settings: &RawVulkanInitSettings,
     additional_features: &mut AdditionalVulkanFeatures,
 ) -> Instance {
+    // Raw interop constructs a Vulkan-only instance. Preserve Auto and explicit non-Vulkan masks.
+    if instance_descriptor.backends != wgpu::Backends::VULKAN {
+        return Instance::new(instance_descriptor);
+    }
     // SAFETY: Registering callbacks is unsafe. Callback authors promise not to remove features
     // or change the instance to something it does not support
     unsafe {
