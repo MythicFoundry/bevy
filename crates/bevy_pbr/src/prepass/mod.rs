@@ -262,6 +262,8 @@ pub struct PrepassPipeline {
     /// current render device.
     pub binding_arrays_are_usable: bool,
     pub material_pipeline: MaterialPipeline,
+    /// Optional application-owned deferred attachment; unused materials leave it untouched.
+    pub extra_deferred_target: Option<ColorTargetState>,
 }
 
 pub fn init_prepass_pipeline(
@@ -336,6 +338,7 @@ pub fn init_prepass_pipeline(
         binding_arrays_are_usable: binding_arrays_are_usable(&render_device, &render_adapter),
         empty_layout: BindGroupLayoutDescriptor::new("prepass_empty_layout", &[]),
         material_pipeline: material_pipeline.clone(),
+        extra_deferred_target: None,
     });
 }
 
@@ -560,6 +563,9 @@ impl PrepassPipeline {
             mesh_key.contains(MeshPipelineKey::DEFERRED_PREPASS),
         );
 
+        if mesh_key.contains(MeshPipelineKey::DEFERRED_PREPASS) {
+            if let Some(target) = &self.extra_deferred_target { targets.push(Some(target.clone())); }
+        }
         if targets.iter().all(Option::is_none) {
             // if no targets are required then clear the list, so that no fragment shader is required
             // (though one may still be used for discarding depth buffer writes)
