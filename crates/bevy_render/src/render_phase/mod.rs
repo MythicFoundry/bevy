@@ -1070,9 +1070,9 @@ where
             // locks.
         }
 
-        self.render_batchable_meshes(render_pass, world, view)?;
-        self.render_unbatchable_meshes(render_pass, world, view)?;
-        self.render_non_meshes(render_pass, world, view)?;
+        self.render_batchable_meshes(render_pass, world, view, &|_| true)?;
+        self.render_unbatchable_meshes(render_pass, world, view, &|_| true)?;
+        self.render_non_meshes(render_pass, world, view, &|_| true)?;
 
         Ok(())
     }
@@ -1083,6 +1083,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
+        map: &dyn Fn(&mut BPI) -> bool,
     ) -> Result<(), DrawError> {
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
@@ -1103,7 +1104,7 @@ where
                     self.batchable_meshes.keys().zip(batch_sets.iter())
                 {
                     for batch in batch_set {
-                        let binned_phase_item = BPI::new(
+                        let mut binned_phase_item = BPI::new(
                             batch_set_key.clone(),
                             bin_key.clone(),
                             batch.representative_entity,
@@ -1112,6 +1113,7 @@ where
                         );
 
                         // Fetch the draw function.
+                        if !map(&mut binned_phase_item) { continue; }
                         let Some(draw_function) =
                             draw_functions.get_mut(binned_phase_item.draw_function())
                         else {
@@ -1127,7 +1129,7 @@ where
                 for (batch, (batch_set_key, bin_key)) in
                     batch_set.iter().zip(self.batchable_meshes.keys())
                 {
-                    let binned_phase_item = BPI::new(
+                    let mut binned_phase_item = BPI::new(
                         batch_set_key.clone(),
                         bin_key.clone(),
                         batch.representative_entity,
@@ -1136,6 +1138,7 @@ where
                     );
 
                     // Fetch the draw function.
+                    if !map(&mut binned_phase_item) { continue; }
                     let Some(draw_function) =
                         draw_functions.get_mut(binned_phase_item.draw_function())
                     else {
@@ -1165,7 +1168,7 @@ where
                         None
                     };
 
-                    let binned_phase_item = BPI::new(
+                    let mut binned_phase_item = BPI::new(
                         batch_set_key.clone(),
                         batch_set.bin_key.clone(),
                         batch.representative_entity,
@@ -1185,6 +1188,7 @@ where
                     );
 
                     // Fetch the draw function.
+                    if !map(&mut binned_phase_item) { continue; }
                     let Some(draw_function) =
                         draw_functions.get_mut(binned_phase_item.draw_function())
                     else {
@@ -1205,6 +1209,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
+        map: &dyn Fn(&mut BPI) -> bool,
     ) -> Result<(), DrawError> {
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
@@ -1242,7 +1247,7 @@ where
                     }
                 };
 
-                let binned_phase_item = BPI::new(
+                let mut binned_phase_item = BPI::new(
                     batch_set_key.clone(),
                     bin_key.clone(),
                     (*entity.1, *entity.0),
@@ -1252,6 +1257,7 @@ where
                 );
 
                 // Fetch the draw function.
+                if !map(&mut binned_phase_item) { continue; }
                 let Some(draw_function) = draw_functions.get_mut(binned_phase_item.draw_function())
                 else {
                     continue;
@@ -1271,6 +1277,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
+        map: &dyn Fn(&mut BPI) -> bool,
     ) -> Result<(), DrawError> {
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
@@ -1279,7 +1286,7 @@ where
             for (main_entity, entity) in non_mesh_entities.entities.iter() {
                 // Come up with a fake batch range and extra index. The draw
                 // function is expected to manage any sort of batching logic itself.
-                let binned_phase_item = BPI::new(
+                let mut binned_phase_item = BPI::new(
                     batch_set_key.clone(),
                     bin_key.clone(),
                     (*entity, *main_entity),
@@ -1287,6 +1294,7 @@ where
                     PhaseItemExtraIndex::None,
                 );
 
+                if !map(&mut binned_phase_item) { continue; }
                 let Some(draw_function) = draw_functions.get_mut(binned_phase_item.draw_function())
                 else {
                     continue;
@@ -1296,6 +1304,19 @@ where
             }
         }
 
+        Ok(())
+    }
+
+    /// Render prepared items through a caller-supplied transient mapping.
+    /// Mapping never changes stored bins, instance ranges, visibility or GPU batches.
+    pub fn render_mapped<'w>(
+        &self, render_pass: &mut TrackedRenderPass<'w>, world: &'w World,
+        view: Entity, map: &dyn Fn(&mut BPI) -> bool,
+    ) -> Result<(), DrawError> {
+        { let mut functions=world.resource::<DrawFunctions<BPI>>().write(); functions.prepare(world); }
+        self.render_batchable_meshes(render_pass,world,view,map)?;
+        self.render_unbatchable_meshes(render_pass,world,view,map)?;
+        self.render_non_meshes(render_pass,world,view,map)?;
         Ok(())
     }
 
